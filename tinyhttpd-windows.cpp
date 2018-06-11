@@ -21,6 +21,7 @@ void error_die(const char *);
 int get_line(SOCKET, char *, int);
 void not_found(SOCKET);
 SOCKET startup(const char *);
+void unimplemented(SOCKET);
 
 void accept_request(SOCKET client_socket) {
 
@@ -145,6 +146,28 @@ SOCKET startup(char *port) {
 		error_die("Listen failed with error\n");
 	}
 	return httpd;
+}
+
+void unimplemented(SOCKET client)
+{
+	char buf[1024];
+
+	sprintf_s(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
+	send(client, buf, strlen(buf), 0);
+	sprintf_s(buf, SERVER_STRING);
+	send(client, buf, strlen(buf), 0);
+	sprintf_s(buf, "Content-Type: text/html\r\n");
+	send(client, buf, strlen(buf), 0);
+	sprintf_s(buf, "\r\n");
+	send(client, buf, strlen(buf), 0);
+	sprintf_s(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
+	send(client, buf, strlen(buf), 0);
+	sprintf_s(buf, "</TITLE></HEAD>\r\n");
+	send(client, buf, strlen(buf), 0);
+	sprintf_s(buf, "<BODY><P>HTTP request method not supported.\r\n");
+	send(client, buf, strlen(buf), 0);
+	sprintf_s(buf, "</BODY></HTML>\r\n");
+	send(client, buf, strlen(buf), 0);
 }
 
 int main(void) {
