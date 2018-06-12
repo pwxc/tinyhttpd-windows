@@ -11,15 +11,20 @@
 #include <ws2tcpip.h>
 #include <Windows.h>
 #include <iphlpapi.h>
+#include <io.h>
 
+#define ISspace(x) isspace((int)(x))
 #pragma comment(lib, "Ws2_32.lib")
 
-#define SERVER_STRING "Server: jdbhttpd/0.1.0\r\n"
+#define SERVER_STRING "Server: jdbhttpd-windows/0.1.0\r\n"
 
 void accept_request(SOCKET);
+void cat(SOCKET, FILE *);
 void error_die(const char *);
 int get_line(SOCKET, char *, int);
+void headers(SOCKET, const char *);
 void not_found(SOCKET);
+void server_file(SOCKET, const char *);
 SOCKET startup(const char *);
 void unimplemented(SOCKET);
 
@@ -27,23 +32,71 @@ void accept_request(SOCKET client_socket) {
 
 	SOCKET client = client_socket;
 	int numchars = 0;
+	size_t i, j;
 
 	char buf[1024];
+	char method[255];
+	char url[255];
+	char path[512];
 	int iResult;
 
 	numchars = get_line(client, buf, sizeof(buf));
+	i = 0;
+	j = 0;
+
+	while (!ISspace(buf[i]) && (i < sizeof(method) - 1)) {
+		method[i] = buf[i];
+		i++;
+	}
+	j = i;
+	method[i] = '\0';
+	if (_stricmp(method, "get") && _stricmp(method, "post")) {
+		unimplemented(client);
+		return;
+	}
+
+	i = 0;
+	while (ISspace(buf[j]) && (j < numchars)) {
+		j++;
+	}
+
+	while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < numchars)) {
+		url[i] = buf[j];
+		i++;
+		j++;
+	}
+	url[i] = '\0';
+
+	sprintf_s(path, "htdocs%s", url);
+	if (path[strlen(path) - 1] == '/') {
+		strcat_s(path, "index.html");
+	}
+
+	if (!_access(path, 0)) {
+		server_file(client,path);
+	} else {
+		not_found(client);
+	}
 	
-	not_found(client);
+
 
 	iResult = shutdown(client, SD_SEND);
 	if (iResult == SOCKET_ERROR) {
 		closesocket(client);
 		WSACleanup();
 		error_die("shutdown failed with error\n");
-
 	}
 	closesocket(client);
 
+}
+
+void cat(SOCKET client, FILE *resource) {
+	char buf[1024];
+
+	while (!feof(resource)) {
+		fgets(buf, sizeof(buf), resource);
+		send(client, buf, strlen(buf), 0);
+	}
 }
 
 void error_die(const char *sc)
@@ -61,10 +114,12 @@ int get_line(SOCKET sock, char *buf, int size) {
 		if (n > 0) {
 			if (c == '\r') {
 				n = recv(sock, &c, 1, MSG_PEEK);
-				if ((n > 0) && (c == '\n'))
+				if ((n > 0) && (c == '\n')) {
 					recv(sock, &c, 1, 0);
-				else
+				}
+				else {
 					c = '\n';
+				}
 			}
 			buf[i] = c;
 			i++;
@@ -76,28 +131,61 @@ int get_line(SOCKET sock, char *buf, int size) {
 	return i;
 }
 
-void not_found(SOCKET client) {
+void headers(SOCKET client, const char *filename) {
 	char buf[1024];
-	sprintf_s(buf, "HTTP/1.0 404 NOT FOUND\r\n");
+
+	strcpy_s(buf, "HTTP/1.0 200 OK\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, SERVER_STRING);
+	strcpy_s(buf, SERVER_STRING);
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "Content-Type: text/html\r\n");
+	strcpy_s(buf, "Content-Type: text/html\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "\r\n");
-	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "<HTML><TITLE>Not Found</TITLE>\r\n");
-	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "<BODY><P>The server could not fulfill\r\n");
-	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "your request because the resource specified\r\n");
-	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "is unavailable or nonexistent.\r\n");
-	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "</BODY></HTML>\r\n");
+	strcpy_s(buf, "\r\n");
 	send(client, buf, strlen(buf), 0);
 }
 
+void not_found(SOCKET client) {
+	char buf[1024];
+	strcpy_s(buf, "HTTP/1.0 404 NOT FOUND\r\n");
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, SERVER_STRING);
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, "Content-Type: text/html\r\n");
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, "\r\n");
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, "<HTML><TITLE>Not Found</TITLE>\r\n");
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, "<BODY><P>The server could not fulfill\r\n");
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, "your request because the resource specified\r\n");
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, "is unavailable or nonexistent.\r\n");
+	send(client, buf, strlen(buf), 0);
+	strcpy_s(buf, "</BODY></HTML>\r\n");
+	send(client, buf, strlen(buf), 0);
+}
+
+void server_file(SOCKET client, const char *filename) {
+	FILE *resource = NULL;
+	int numchars = 1;
+	char buf[1024];
+
+	buf[0] = 'A';
+	buf[1] = '\0';
+	while ((numchars > 0) && strcmp("\n", buf)) {
+		numchars = get_line(client, buf, sizeof(buf));
+	}
+
+	fopen_s(&resource,filename, "r");
+	if (resource == NULL) {
+		not_found(client);
+	} else {
+		headers(client, filename);
+		cat(client, resource);
+	}
+	fclose(resource);
+}
 SOCKET startup(char *port) {
 	SOCKET httpd = INVALID_SOCKET;
 
@@ -152,21 +240,21 @@ void unimplemented(SOCKET client)
 {
 	char buf[1024];
 
-	sprintf_s(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
+	strcpy_s(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, SERVER_STRING);
+	strcpy_s(buf, SERVER_STRING);
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "Content-Type: text/html\r\n");
+	strcpy_s(buf, "Content-Type: text/html\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "\r\n");
+	strcpy_s(buf, "\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
+	strcpy_s(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "</TITLE></HEAD>\r\n");
+	strcpy_s(buf, "</TITLE></HEAD>\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "<BODY><P>HTTP request method not supported.\r\n");
+	strcpy_s(buf, "<BODY><P>HTTP request method not supported.\r\n");
 	send(client, buf, strlen(buf), 0);
-	sprintf_s(buf, "</BODY></HTML>\r\n");
+	strcpy_s(buf, "</BODY></HTML>\r\n");
 	send(client, buf, strlen(buf), 0);
 }
 
